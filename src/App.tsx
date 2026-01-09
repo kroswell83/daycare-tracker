@@ -23,7 +23,6 @@ type RecordRow = {
   kidId: string;
   kidName: string;
 
-  // We store "" (empty string) when cleared to avoid Firestore undefined/delete issues
   inTime?: string; // "HH:MM" or ""
   outTime?: string; // "HH:MM" or ""
 
@@ -32,7 +31,6 @@ type RecordRow = {
   lunch: number;
   pmSnack: number;
 
-  // audit/metadata
   source?: "auto" | "manual";
   editedBy?: string;
   editReason?: string; // "" allowed
@@ -65,7 +63,6 @@ function isValidHHMM(t: string) {
   return m !== null && m >= 0 && m < 24 * 60;
 }
 
-// Firestore does NOT allow `undefined`. Remove undefined keys before setDoc.
 function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
   const out: any = {};
   for (const [k, v] of Object.entries(obj)) {
@@ -75,10 +72,9 @@ function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
 }
 
 function calcMeals(r: RecordRow) {
-  const i = toMin(r.inTime); // if inTime is "" => toMin("") returns null
+  const i = toMin(r.inTime);
   const o = toMin(r.outTime) ?? 24 * 60;
 
-  // If no valid inTime, do NOT auto-calc (return as-is)
   if (i == null) return r;
 
   const bS = toMin(MEALS.breakfast.start)!;
@@ -100,7 +96,6 @@ function calcMeals(r: RecordRow) {
 
 const yearFromDate = (d: string) => Number(d.slice(0, 4));
 const monthFromDate = (d: string) => d.slice(0, 7); // YYYY-MM
-
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export default function App() {
@@ -120,19 +115,17 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState<string>("");
 
   // reimbursement rates (by year)
-  const [ratesByYear, setRatesByYear] = useState<Record<number, ReimbursementRates>>(
-    {}
-  );
+  const [ratesByYear, setRatesByYear] = useState<
+    Record<number, ReimbursementRates>
+  >({});
   const [ratesYear, setRatesYear] = useState<number>(new Date().getFullYear());
   const [rateBreakfast, setRateBreakfast] = useState<string>("0");
   const [rateSnack, setRateSnack] = useState<string>("0");
   const [rateLunch, setRateLunch] = useState<string>("0");
   const [ratesStatus, setRatesStatus] = useState<string>("");
 
-  // auth listener
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
-  // live sync kids + records + reimbursement rates
   useEffect(() => {
     if (!user) return;
 
@@ -146,7 +139,15 @@ export default function App() {
       setRecords(snap.docs.map((d) => d.data() as RecordRow));
     });
 
-    const ratesCol = collection(db, "users", user.uid, "settings", "reimbursementRates");
+    // users/{uid}/settings/config/reimbursementRates/{year}
+    const ratesCol = collection(
+      db,
+      "users",
+      user.uid,
+      "settings",
+      "config",
+      "reimbursementRates"
+    );
     const unsubRates = onSnapshot(query(ratesCol, orderBy("year")), (snap) => {
       const map: Record<number, ReimbursementRates> = {};
       for (const d of snap.docs) {
@@ -163,7 +164,6 @@ export default function App() {
     };
   }, [user]);
 
-  // when changing selected year, populate inputs from saved rates (if exist)
   useEffect(() => {
     const r = ratesByYear[ratesYear];
     if (r) {
@@ -188,7 +188,6 @@ export default function App() {
     setNewKid("");
   }
 
-  // Update OR Insert record for this kid+date
   async function upsertRecord(kid: Kid, patch: Partial<RecordRow>) {
     if (!user) return;
 
@@ -213,10 +212,8 @@ export default function App() {
           editReason: "",
         };
 
-    // remove undefined keys (Firestore rejects undefined)
     const cleanedPatch = stripUndefined(patch);
 
-    // merge + recalc meals (if inTime is "", calcMeals returns unchanged)
     const merged: RecordRow = calcMeals({
       ...base,
       ...(cleanedPatch as any),
@@ -260,7 +257,6 @@ export default function App() {
     try {
       setSaveStatus("Clearing…");
 
-      // Clear times by setting "" and explicitly zero meals
       await upsertRecord(kid, {
         inTime: "",
         outTime: "",
@@ -306,7 +302,6 @@ export default function App() {
         return;
       }
 
-      // outTime becomes "" when blank
       const patch: Partial<RecordRow> = {
         inTime: inTrim,
         outTime: outTrim || "",
@@ -314,7 +309,6 @@ export default function App() {
         editedBy: user?.uid,
       };
 
-      // only include editReason if they typed one (avoid undefined)
       if (reasonTrim) patch.editReason = reasonTrim;
 
       await upsertRecord(kid, patch);
@@ -355,7 +349,16 @@ export default function App() {
       return;
     }
 
-    const ref = doc(db, "users", user.uid, "settings", "reimbursementRates", String(y));
+    const ref = doc(
+      db,
+      "users",
+      user.uid,
+      "settings",
+      "config",
+      "reimbursementRates",
+      String(y)
+    );
+
     const payload: ReimbursementRates = {
       year: y,
       breakfast: round2(b),
@@ -375,10 +378,6 @@ export default function App() {
     }
   }
 
-  // pick best available rates for a given year:
-  // - exact year if exists
-  // - otherwise nearest prior year
-  // - otherwise zeros
   const getRatesForYear = (y: number): ReimbursementRates => {
     const exact = ratesByYear[y];
     if (exact) return exact;
@@ -395,11 +394,9 @@ export default function App() {
     }
 
     if (best != null) return ratesByYear[best];
-
     return { year: y, breakfast: 0, snack: 0, lunch: 0 };
   };
 
-  // reimbursement summaries
   const monthlySummary = useMemo(() => {
     type Row = {
       month: string; // YYYY-MM
@@ -442,19 +439,12 @@ export default function App() {
       cur.lunches += lunches;
       cur.total += amount;
 
-      // if rates fallback year changes within month (shouldn’t, but just in case),
-      // keep the earliest chosen year (not critical)
-      cur.rateYearUsed = cur.rateYearUsed || rates.year;
-
       map.set(month, cur);
     }
 
     return Array.from(map.values())
       .sort((a, b) => a.month.localeCompare(b.month))
-      .map((r) => ({
-        ...r,
-        total: round2(r.total),
-      }));
+      .map((r) => ({ ...r, total: round2(r.total) }));
   }, [records, ratesByYear]);
 
   const annualSummary = useMemo(() => {
@@ -502,20 +492,17 @@ export default function App() {
 
     return Array.from(map.values())
       .sort((a, b) => a.year - b.year)
-      .map((r) => ({
-        ...r,
-        total: round2(r.total),
-      }));
+      .map((r) => ({ ...r, total: round2(r.total) }));
   }, [records, ratesByYear]);
 
   function exportExcel() {
-    // Records tab: include a computed reimbursement column (based on record date year)
     const recordsWithReimb = records.map((r) => {
       const y = yearFromDate(r.date);
       const rates = getRatesForYear(y);
       const breakfasts = r.breakfast || 0;
       const snacks = (r.amSnack || 0) + (r.pmSnack || 0);
       const lunches = r.lunch || 0;
+
       const reimbursement =
         breakfasts * (rates.breakfast || 0) +
         snacks * (rates.snack || 0) +
@@ -590,7 +577,144 @@ export default function App() {
         />
       </div>
 
-      {/* Reimbursement Rates */}
+      {/* ✅ CLOCK-IN/CLOCK-OUT FIRST */}
+      <div style={{ marginTop: 14 }}>
+        {todaysKids.map((k) => {
+          const r = recMap.get(`${date}_${k.id}`);
+          const isEditing = editingKidId === k.id;
+
+          return (
+            <div
+              key={k.id}
+              style={{
+                marginBottom: 12,
+                padding: 10,
+                border: "1px solid #eee",
+                borderRadius: 8,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <b style={{ fontSize: 16 }}>{k.name}</b>
+
+                <button onClick={() => checkIn(k)}>Check In</button>
+                <button onClick={() => checkOut(k)}>Check Out</button>
+
+                <button
+                  onClick={() => {
+                    setEditingKidId(k.id);
+                    setEditIn(r?.inTime ?? "");
+                    setEditOut(r?.outTime ?? "");
+                    setEditReason("");
+                    setSaveStatus("");
+                  }}
+                >
+                  Edit Times
+                </button>
+
+                {(r?.inTime || r?.outTime) && (
+                  <button onClick={() => clearTimes(k)}>Clear</button>
+                )}
+              </div>
+
+              <div style={{ marginTop: 6 }}>
+                In: {r?.inTime || "-"} | Out: {r?.outTime || "-"} | B:
+                {r?.breakfast || 0} AM:{r?.amSnack || 0} L:{r?.lunch || 0} PM:
+                {r?.pmSnack || 0}
+                {r?.source ? (
+                  <span style={{ marginLeft: 10, opacity: 0.7 }}>
+                    (source: {r.source})
+                  </span>
+                ) : null}
+              </div>
+
+              {isEditing && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      alignItems: "center",
+                    }}
+                  >
+                    In:
+                    <input
+                      type="time"
+                      value={editIn}
+                      onChange={(e) => setEditIn(e.target.value)}
+                      style={{ padding: 6 }}
+                    />
+                  </label>
+
+                  <label
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      alignItems: "center",
+                    }}
+                  >
+                    Out:
+                    <input
+                      type="time"
+                      value={editOut}
+                      onChange={(e) => setEditOut(e.target.value)}
+                      style={{ padding: 6 }}
+                    />
+                  </label>
+
+                  <input
+                    placeholder="Reason (optional)"
+                    value={editReason}
+                    onChange={(e) => setEditReason(e.target.value)}
+                    style={{ padding: 6, minWidth: 220 }}
+                  />
+
+                  <button onClick={async () => await saveManualTimes(k)}>
+                    Save
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingKidId(null);
+                      setSaveStatus("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ✅ ADD KID AREA (above rates + summary) */}
+      <div style={{ marginTop: 6 }}>
+        <h3 style={{ margin: "10px 0 6px" }}>Kids</h3>
+        <input
+          placeholder="Add kid"
+          value={newKid}
+          onChange={(e) => setNewKid(e.target.value)}
+        />
+        <button onClick={addKid} style={{ marginLeft: 6 }}>
+          Add
+        </button>
+      </div>
+
+      {/* ✅ RATES UNDER "ADD KID" */}
       <div
         style={{
           marginTop: 16,
@@ -654,129 +778,12 @@ export default function App() {
         </div>
 
         <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-          Tip: These rates apply automatically based on each record’s date year.
-          If a year is missing, the app uses the most recent prior year’s rates.
+          Tip: Rates apply automatically based on each record’s year.
+          Missing years use the most recent prior year’s rates.
         </div>
       </div>
 
-      <h3 style={{ marginTop: 16 }}>Kids</h3>
-      <input
-        placeholder="Add kid"
-        value={newKid}
-        onChange={(e) => setNewKid(e.target.value)}
-      />
-      <button onClick={addKid}>Add</button>
-
-      <hr />
-
-      {todaysKids.map((k) => {
-        const r = recMap.get(`${date}_${k.id}`);
-        const isEditing = editingKidId === k.id;
-
-        return (
-          <div
-            key={k.id}
-            style={{
-              marginBottom: 12,
-              padding: 10,
-              border: "1px solid #eee",
-              borderRadius: 8,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              <b style={{ fontSize: 16 }}>{k.name}</b>
-
-              <button onClick={() => checkIn(k)}>Check In</button>
-              <button onClick={() => checkOut(k)}>Check Out</button>
-
-              <button
-                onClick={() => {
-                  setEditingKidId(k.id);
-                  setEditIn(r?.inTime ?? "");
-                  setEditOut(r?.outTime ?? "");
-                  setEditReason("");
-                  setSaveStatus("");
-                }}
-              >
-                Edit Times
-              </button>
-
-              {(r?.inTime || r?.outTime) && (
-                <button onClick={() => clearTimes(k)}>Clear</button>
-              )}
-            </div>
-
-            <div style={{ marginTop: 6 }}>
-              In: {r?.inTime || "-"} | Out: {r?.outTime || "-"} | B:
-              {r?.breakfast || 0} AM:{r?.amSnack || 0} L:{r?.lunch || 0} PM:
-              {r?.pmSnack || 0}
-              {r?.source ? (
-                <span style={{ marginLeft: 10, opacity: 0.7 }}>
-                  (source: {r.source})
-                </span>
-              ) : null}
-            </div>
-
-            {isEditing && (
-              <div
-                style={{
-                  marginTop: 10,
-                  display: "flex",
-                  gap: 10,
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                }}
-              >
-                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  In:
-                  <input
-                    type="time"
-                    value={editIn}
-                    onChange={(e) => setEditIn(e.target.value)}
-                    style={{ padding: 6 }}
-                  />
-                </label>
-
-                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  Out:
-                  <input
-                    type="time"
-                    value={editOut}
-                    onChange={(e) => setEditOut(e.target.value)}
-                    style={{ padding: 6 }}
-                  />
-                </label>
-
-                <input
-                  placeholder="Reason (optional)"
-                  value={editReason}
-                  onChange={(e) => setEditReason(e.target.value)}
-                  style={{ padding: 6, minWidth: 220 }}
-                />
-
-                <button onClick={async () => await saveManualTimes(k)}>Save</button>
-                <button
-                  onClick={() => {
-                    setEditingKidId(null);
-                    setSaveStatus("");
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {/* Reimbursement Summary */}
+      {/* ✅ SUMMARY AFTER RATES */}
       <div
         style={{
           marginTop: 16,
@@ -793,19 +800,21 @@ export default function App() {
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
                 <tr>
-                  {["Year", "Breakfasts", "Snacks", "Lunches", "Total ($)"].map((h) => (
-                    <th
-                      key={h}
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #eee",
-                        padding: "6px 8px",
-                        fontSize: 13,
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
+                  {["Year", "Breakfasts", "Snacks", "Lunches", "Total ($)"].map(
+                    (h) => (
+                      <th
+                        key={h}
+                        style={{
+                          textAlign: "left",
+                          borderBottom: "1px solid #eee",
+                          padding: "6px 8px",
+                          fontSize: 13,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    )
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -822,7 +831,9 @@ export default function App() {
                       <td style={{ padding: "6px 8px" }}>{r.breakfasts}</td>
                       <td style={{ padding: "6px 8px" }}>{r.snacks}</td>
                       <td style={{ padding: "6px 8px" }}>{r.lunches}</td>
-                      <td style={{ padding: "6px 8px" }}>{r.total.toFixed(2)}</td>
+                      <td style={{ padding: "6px 8px" }}>
+                        {r.total.toFixed(2)}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -837,19 +848,21 @@ export default function App() {
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
                 <tr>
-                  {["Month", "Breakfasts", "Snacks", "Lunches", "Total ($)"].map((h) => (
-                    <th
-                      key={h}
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #eee",
-                        padding: "6px 8px",
-                        fontSize: 13,
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
+                  {["Month", "Breakfasts", "Snacks", "Lunches", "Total ($)"].map(
+                    (h) => (
+                      <th
+                        key={h}
+                        style={{
+                          textAlign: "left",
+                          borderBottom: "1px solid #eee",
+                          padding: "6px 8px",
+                          fontSize: 13,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    )
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -866,7 +879,9 @@ export default function App() {
                       <td style={{ padding: "6px 8px" }}>{r.breakfasts}</td>
                       <td style={{ padding: "6px 8px" }}>{r.snacks}</td>
                       <td style={{ padding: "6px 8px" }}>{r.lunches}</td>
-                      <td style={{ padding: "6px 8px" }}>{r.total.toFixed(2)}</td>
+                      <td style={{ padding: "6px 8px" }}>
+                        {r.total.toFixed(2)}
+                      </td>
                     </tr>
                   ))
                 )}
