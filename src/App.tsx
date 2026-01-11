@@ -9,6 +9,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
   onSnapshot,
   query,
   orderBy,
@@ -23,6 +24,7 @@ type RecordRow = {
   kidId: string;
   kidName: string;
 
+  // We store "" (empty string) when cleared to avoid Firestore undefined/delete issues
   inTime?: string; // "HH:MM" or ""
   outTime?: string; // "HH:MM" or ""
 
@@ -31,6 +33,7 @@ type RecordRow = {
   lunch: number;
   pmSnack: number;
 
+  // audit/metadata
   source?: "auto" | "manual";
   editedBy?: string;
   editReason?: string; // "" allowed
@@ -63,6 +66,7 @@ function isValidHHMM(t: string) {
   return m !== null && m >= 0 && m < 24 * 60;
 }
 
+// Firestore does NOT allow `undefined`. Remove undefined keys before setDoc.
 function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
   const out: any = {};
   for (const [k, v] of Object.entries(obj)) {
@@ -72,9 +76,10 @@ function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
 }
 
 function calcMeals(r: RecordRow) {
-  const i = toMin(r.inTime);
+  const i = toMin(r.inTime); // if inTime is "" => toMin("") returns null
   const o = toMin(r.outTime) ?? 24 * 60;
 
+  // If no valid inTime, do NOT auto-calc (return as-is)
   if (i == null) return r;
 
   const bS = toMin(MEALS.breakfast.start)!;
@@ -96,6 +101,7 @@ function calcMeals(r: RecordRow) {
 
 const yearFromDate = (d: string) => Number(d.slice(0, 4));
 const monthFromDate = (d: string) => d.slice(0, 7); // YYYY-MM
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export default function App() {
@@ -124,8 +130,10 @@ export default function App() {
   const [rateLunch, setRateLunch] = useState<string>("0");
   const [ratesStatus, setRatesStatus] = useState<string>("");
 
+  // auth listener
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
+  // live sync kids + records + reimbursement rates
   useEffect(() => {
     if (!user) return;
 
@@ -164,6 +172,7 @@ export default function App() {
     };
   }, [user]);
 
+  // when changing selected year, populate inputs from saved rates (if exist)
   useEffect(() => {
     const r = ratesByYear[ratesYear];
     if (r) {
@@ -188,6 +197,20 @@ export default function App() {
     setNewKid("");
   }
 
+  // ✅ NEW: deactivate kid (hide from list, keep history)
+  async function deactivateKid(kid: Kid) {
+    if (!user) return;
+
+    const ok = confirm(
+      `Deactivate ${kid.name}? They will be hidden from the list, but history will remain.`
+    );
+    if (!ok) return;
+
+    const ref = doc(db, "users", user.uid, "kids", kid.id);
+    await updateDoc(ref, { active: false });
+  }
+
+  // Update OR Insert record for this kid+date
   async function upsertRecord(kid: Kid, patch: Partial<RecordRow>) {
     if (!user) return;
 
@@ -212,8 +235,10 @@ export default function App() {
           editReason: "",
         };
 
+    // remove undefined keys (Firestore rejects undefined)
     const cleanedPatch = stripUndefined(patch);
 
+    // merge + recalc meals (if inTime is "", calcMeals returns unchanged)
     const merged: RecordRow = calcMeals({
       ...base,
       ...(cleanedPatch as any),
@@ -257,6 +282,7 @@ export default function App() {
     try {
       setSaveStatus("Clearing…");
 
+      // Clear times by setting "" and explicitly zero meals
       await upsertRecord(kid, {
         inTime: "",
         outTime: "",
@@ -302,6 +328,7 @@ export default function App() {
         return;
       }
 
+      // outTime becomes "" when blank
       const patch: Partial<RecordRow> = {
         inTime: inTrim,
         outTime: outTrim || "",
@@ -309,6 +336,7 @@ export default function App() {
         editedBy: user?.uid,
       };
 
+      // only include editReason if they typed one (avoid undefined)
       if (reasonTrim) patch.editReason = reasonTrim;
 
       await upsertRecord(kid, patch);
@@ -378,6 +406,10 @@ export default function App() {
     }
   }
 
+  // pick best available rates for a given year:
+  // - exact year if exists
+  // - otherwise nearest prior year
+  // - otherwise zeros
   const getRatesForYear = (y: number): ReimbursementRates => {
     const exact = ratesByYear[y];
     if (exact) return exact;
@@ -394,9 +426,11 @@ export default function App() {
     }
 
     if (best != null) return ratesByYear[best];
+
     return { year: y, breakfast: 0, snack: 0, lunch: 0 };
   };
 
+  // reimbursement summaries
   const monthlySummary = useMemo(() => {
     type Row = {
       month: string; // YYYY-MM
@@ -444,7 +478,10 @@ export default function App() {
 
     return Array.from(map.values())
       .sort((a, b) => a.month.localeCompare(b.month))
-      .map((r) => ({ ...r, total: round2(r.total) }));
+      .map((r) => ({
+        ...r,
+        total: round2(r.total),
+      }));
   }, [records, ratesByYear]);
 
   const annualSummary = useMemo(() => {
@@ -492,10 +529,14 @@ export default function App() {
 
     return Array.from(map.values())
       .sort((a, b) => a.year - b.year)
-      .map((r) => ({ ...r, total: round2(r.total) }));
+      .map((r) => ({
+        ...r,
+        total: round2(r.total),
+      }));
   }, [records, ratesByYear]);
 
   function exportExcel() {
+    // Records tab: include a computed reimbursement column (based on record date year)
     const recordsWithReimb = records.map((r) => {
       const y = yearFromDate(r.date);
       const rates = getRatesForYear(y);
@@ -577,7 +618,7 @@ export default function App() {
         />
       </div>
 
-      {/* ✅ CLOCK-IN/CLOCK-OUT FIRST */}
+      {/* CLOCK-IN/CLOCK-OUT FIRST */}
       <div style={{ marginTop: 14 }}>
         {todaysKids.map((k) => {
           const r = recMap.get(`${date}_${k.id}`);
@@ -621,6 +662,15 @@ export default function App() {
                 {(r?.inTime || r?.outTime) && (
                   <button onClick={() => clearTimes(k)}>Clear</button>
                 )}
+
+                {/* ✅ NEW BUTTON */}
+                <button
+                  onClick={() => deactivateKid(k)}
+                  title="Hide from list but keep history"
+                  style={{ color: "#a00" }}
+                >
+                  Deactivate
+                </button>
               </div>
 
               <div style={{ marginTop: 6 }}>
@@ -701,7 +751,7 @@ export default function App() {
         })}
       </div>
 
-      {/* ✅ ADD KID AREA (above rates + summary) */}
+      {/* ADD KID AREA */}
       <div style={{ marginTop: 6 }}>
         <h3 style={{ margin: "10px 0 6px" }}>Kids</h3>
         <input
@@ -714,7 +764,7 @@ export default function App() {
         </button>
       </div>
 
-      {/* ✅ RATES UNDER "ADD KID" */}
+      {/* RATES */}
       <div
         style={{
           marginTop: 16,
@@ -730,7 +780,14 @@ export default function App() {
           ) : null}
         </div>
 
-        <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div
+          style={{
+            marginTop: 10,
+            display: "flex",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             Year:
             <input
@@ -778,12 +835,12 @@ export default function App() {
         </div>
 
         <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-          Tip: Rates apply automatically based on each record’s year.
-          Missing years use the most recent prior year’s rates.
+          Tip: These rates apply automatically based on each record’s date year.
+          If a year is missing, the app uses the most recent prior year’s rates.
         </div>
       </div>
 
-      {/* ✅ SUMMARY AFTER RATES */}
+      {/* SUMMARY */}
       <div
         style={{
           marginTop: 16,
