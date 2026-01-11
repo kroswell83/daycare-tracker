@@ -48,6 +48,23 @@ type ReimbursementRates = {
   updatedAt?: any;
 };
 
+const COLORS = {
+  bgPage: "#f7f9fb",
+  card: "#ffffff",
+  border: "#e3e7ee",
+
+  header: "#0f172a",
+  muted: "#64748b",
+
+  primary: "#2563eb", // blue
+  success: "#16a34a", // green
+  danger: "#dc2626", // red
+  warning: "#f59e0b", // amber
+
+  infoBg: "#e0f2fe",
+  infoText: "#0369a1",
+};
+
 const MEALS = {
   breakfast: { start: "09:00", end: "09:30" },
   amSnack: "11:00",
@@ -101,8 +118,40 @@ function calcMeals(r: RecordRow) {
 
 const yearFromDate = (d: string) => Number(d.slice(0, 4));
 const monthFromDate = (d: string) => d.slice(0, 7); // YYYY-MM
-
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+function buttonStyle(variant: "primary" | "success" | "danger" | "warning" | "neutral") {
+  const base: React.CSSProperties = {
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: `1px solid ${COLORS.border}`,
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 13,
+    lineHeight: 1,
+  };
+
+  if (variant === "primary")
+    return { ...base, background: COLORS.primary, color: "#fff", border: "1px solid transparent" };
+  if (variant === "success")
+    return { ...base, background: COLORS.success, color: "#fff", border: "1px solid transparent" };
+  if (variant === "danger")
+    return { ...base, background: COLORS.danger, color: "#fff", border: "1px solid transparent" };
+  if (variant === "warning")
+    return { ...base, background: "#fde68a", color: "#111827", border: `1px solid #f59e0b` };
+  return { ...base, background: "#ffffff", color: COLORS.header };
+}
+
+function cardStyle(extra?: React.CSSProperties): React.CSSProperties {
+  return {
+    background: COLORS.card,
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 12,
+    padding: 12,
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    ...extra,
+  };
+}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -197,7 +246,7 @@ export default function App() {
     setNewKid("");
   }
 
-  // ✅ NEW: deactivate kid (hide from list, keep history)
+  // Deactivate kid (hide from list, keep history)
   async function deactivateKid(kid: Kid) {
     if (!user) return;
 
@@ -235,10 +284,8 @@ export default function App() {
           editReason: "",
         };
 
-    // remove undefined keys (Firestore rejects undefined)
     const cleanedPatch = stripUndefined(patch);
 
-    // merge + recalc meals (if inTime is "", calcMeals returns unchanged)
     const merged: RecordRow = calcMeals({
       ...base,
       ...(cleanedPatch as any),
@@ -282,7 +329,6 @@ export default function App() {
     try {
       setSaveStatus("Clearing…");
 
-      // Clear times by setting "" and explicitly zero meals
       await upsertRecord(kid, {
         inTime: "",
         outTime: "",
@@ -328,7 +374,6 @@ export default function App() {
         return;
       }
 
-      // outTime becomes "" when blank
       const patch: Partial<RecordRow> = {
         inTime: inTrim,
         outTime: outTrim || "",
@@ -336,7 +381,6 @@ export default function App() {
         editedBy: user?.uid,
       };
 
-      // only include editReason if they typed one (avoid undefined)
       if (reasonTrim) patch.editReason = reasonTrim;
 
       await upsertRecord(kid, patch);
@@ -406,10 +450,6 @@ export default function App() {
     }
   }
 
-  // pick best available rates for a given year:
-  // - exact year if exists
-  // - otherwise nearest prior year
-  // - otherwise zeros
   const getRatesForYear = (y: number): ReimbursementRates => {
     const exact = ratesByYear[y];
     if (exact) return exact;
@@ -430,7 +470,6 @@ export default function App() {
     return { year: y, breakfast: 0, snack: 0, lunch: 0 };
   };
 
-  // reimbursement summaries
   const monthlySummary = useMemo(() => {
     type Row = {
       month: string; // YYYY-MM
@@ -478,10 +517,7 @@ export default function App() {
 
     return Array.from(map.values())
       .sort((a, b) => a.month.localeCompare(b.month))
-      .map((r) => ({
-        ...r,
-        total: round2(r.total),
-      }));
+      .map((r) => ({ ...r, total: round2(r.total) }));
   }, [records, ratesByYear]);
 
   const annualSummary = useMemo(() => {
@@ -529,14 +565,10 @@ export default function App() {
 
     return Array.from(map.values())
       .sort((a, b) => a.year - b.year)
-      .map((r) => ({
-        ...r,
-        total: round2(r.total),
-      }));
+      .map((r) => ({ ...r, total: round2(r.total) }));
   }, [records, ratesByYear]);
 
   function exportExcel() {
-    // Records tab: include a computed reimbursement column (based on record date year)
     const recordsWithReimb = records.map((r) => {
       const y = yearFromDate(r.date);
       const rates = getRatesForYear(y);
@@ -578,9 +610,9 @@ export default function App() {
 
   if (!user) {
     return (
-      <div style={{ padding: 20, fontFamily: "sans-serif" }}>
-        <h2>Daycare Check-In</h2>
-        <button onClick={() => signInWithPopup(auth, provider)}>
+      <div style={{ padding: 20, fontFamily: "sans-serif", background: COLORS.bgPage, minHeight: "100vh" }}>
+        <h2 style={{ color: COLORS.header }}>Daycare Check-In</h2>
+        <button style={buttonStyle("primary")} onClick={() => signInWithPopup(auth, provider)}>
           Sign in with Google
         </button>
       </div>
@@ -588,9 +620,16 @@ export default function App() {
   }
 
   return (
-    <div style={{ padding: 20, fontFamily: "sans-serif" }}>
+    <div
+      style={{
+        padding: 20,
+        fontFamily: "sans-serif",
+        background: COLORS.bgPage,
+        minHeight: "100vh",
+      }}
+    >
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <h2 style={{ margin: 0 }}>Daycare Check-In</h2>
+        <h2 style={{ margin: 0, color: COLORS.header }}>Daycare Check-In</h2>
         <div
           style={{
             marginLeft: "auto",
@@ -600,9 +639,22 @@ export default function App() {
           }}
         >
           {saveStatus ? (
-            <span style={{ fontSize: 12, opacity: 0.8 }}>{saveStatus}</span>
+            <span
+              style={{
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 8,
+                background: COLORS.infoBg,
+                color: COLORS.infoText,
+                border: `1px solid ${COLORS.border}`,
+              }}
+            >
+              {saveStatus}
+            </span>
           ) : null}
-          <button onClick={() => signOut(auth)}>Sign out</button>
+          <button style={buttonStyle("neutral")} onClick={() => signOut(auth)}>
+            Sign out
+          </button>
         </div>
       </div>
 
@@ -615,6 +667,12 @@ export default function App() {
             setEditingKidId(null);
             setSaveStatus("");
           }}
+          style={{
+            padding: 8,
+            borderRadius: 10,
+            border: `1px solid ${COLORS.border}`,
+            background: "#fff",
+          }}
         />
       </div>
 
@@ -625,15 +683,7 @@ export default function App() {
           const isEditing = editingKidId === k.id;
 
           return (
-            <div
-              key={k.id}
-              style={{
-                marginBottom: 12,
-                padding: 10,
-                border: "1px solid #eee",
-                borderRadius: 8,
-              }}
-            >
+            <div key={k.id} style={cardStyle({ marginBottom: 12 })}>
               <div
                 style={{
                   display: "flex",
@@ -642,12 +692,17 @@ export default function App() {
                   flexWrap: "wrap",
                 }}
               >
-                <b style={{ fontSize: 16 }}>{k.name}</b>
+                <b style={{ fontSize: 16, color: COLORS.header }}>{k.name}</b>
 
-                <button onClick={() => checkIn(k)}>Check In</button>
-                <button onClick={() => checkOut(k)}>Check Out</button>
+                <button style={buttonStyle("success")} onClick={() => checkIn(k)}>
+                  Check In
+                </button>
+                <button style={buttonStyle("danger")} onClick={() => checkOut(k)}>
+                  Check Out
+                </button>
 
                 <button
+                  style={buttonStyle("warning")}
                   onClick={() => {
                     setEditingKidId(k.id);
                     setEditIn(r?.inTime ?? "");
@@ -660,25 +715,40 @@ export default function App() {
                 </button>
 
                 {(r?.inTime || r?.outTime) && (
-                  <button onClick={() => clearTimes(k)}>Clear</button>
+                  <button style={buttonStyle("neutral")} onClick={() => clearTimes(k)}>
+                    Clear
+                  </button>
                 )}
 
-                {/* ✅ NEW BUTTON */}
                 <button
                   onClick={() => deactivateKid(k)}
                   title="Hide from list but keep history"
-                  style={{ color: "#a00" }}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    cursor: "pointer",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    background: "#fee2e2",
+                    color: COLORS.danger,
+                    border: `1px solid ${COLORS.danger}`,
+                  }}
                 >
                   Deactivate
                 </button>
               </div>
 
-              <div style={{ marginTop: 6 }}>
-                In: {r?.inTime || "-"} | Out: {r?.outTime || "-"} | B:
-                {r?.breakfast || 0} AM:{r?.amSnack || 0} L:{r?.lunch || 0} PM:
-                {r?.pmSnack || 0}
+              <div style={{ marginTop: 8, color: COLORS.muted, fontSize: 13 }}>
+                <span style={{ color: COLORS.header, fontWeight: 600 }}>In:</span>{" "}
+                {r?.inTime || "-"}{" "}
+                <span style={{ color: COLORS.header, fontWeight: 600 }}>Out:</span>{" "}
+                {r?.outTime || "-"}{" "}
+                <span style={{ marginLeft: 10 }}>
+                  <span style={{ color: COLORS.header, fontWeight: 600 }}>Meals:</span>{" "}
+                  B:{r?.breakfast || 0} AM:{r?.amSnack || 0} L:{r?.lunch || 0} PM:{r?.pmSnack || 0}
+                </span>
                 {r?.source ? (
-                  <span style={{ marginLeft: 10, opacity: 0.7 }}>
+                  <span style={{ marginLeft: 10, opacity: 0.8 }}>
                     (source: {r.source})
                   </span>
                 ) : null}
@@ -687,42 +757,44 @@ export default function App() {
               {isEditing && (
                 <div
                   style={{
-                    marginTop: 10,
+                    marginTop: 12,
                     display: "flex",
                     gap: 10,
                     flexWrap: "wrap",
                     alignItems: "center",
+                    background: "#f8fafc",
+                    border: `1px dashed ${COLORS.border}`,
+                    padding: 10,
+                    borderRadius: 12,
                   }}
                 >
-                  <label
-                    style={{
-                      display: "flex",
-                      gap: 6,
-                      alignItems: "center",
-                    }}
-                  >
+                  <label style={{ display: "flex", gap: 6, alignItems: "center", color: COLORS.header }}>
                     In:
                     <input
                       type="time"
                       value={editIn}
                       onChange={(e) => setEditIn(e.target.value)}
-                      style={{ padding: 6 }}
+                      style={{
+                        padding: 8,
+                        borderRadius: 10,
+                        border: `1px solid ${COLORS.border}`,
+                        background: "#fff",
+                      }}
                     />
                   </label>
 
-                  <label
-                    style={{
-                      display: "flex",
-                      gap: 6,
-                      alignItems: "center",
-                    }}
-                  >
+                  <label style={{ display: "flex", gap: 6, alignItems: "center", color: COLORS.header }}>
                     Out:
                     <input
                       type="time"
                       value={editOut}
                       onChange={(e) => setEditOut(e.target.value)}
-                      style={{ padding: 6 }}
+                      style={{
+                        padding: 8,
+                        borderRadius: 10,
+                        border: `1px solid ${COLORS.border}`,
+                        background: "#fff",
+                      }}
                     />
                   </label>
 
@@ -730,13 +802,20 @@ export default function App() {
                     placeholder="Reason (optional)"
                     value={editReason}
                     onChange={(e) => setEditReason(e.target.value)}
-                    style={{ padding: 6, minWidth: 220 }}
+                    style={{
+                      padding: 8,
+                      minWidth: 240,
+                      borderRadius: 10,
+                      border: `1px solid ${COLORS.border}`,
+                      background: "#fff",
+                    }}
                   />
 
-                  <button onClick={async () => await saveManualTimes(k)}>
+                  <button style={buttonStyle("primary")} onClick={async () => await saveManualTimes(k)}>
                     Save
                   </button>
                   <button
+                    style={buttonStyle("neutral")}
                     onClick={() => {
                       setEditingKidId(null);
                       setSaveStatus("");
@@ -753,142 +832,165 @@ export default function App() {
 
       {/* ADD KID AREA */}
       <div style={{ marginTop: 6 }}>
-        <h3 style={{ margin: "10px 0 6px" }}>Kids</h3>
-        <input
-          placeholder="Add kid"
-          value={newKid}
-          onChange={(e) => setNewKid(e.target.value)}
-        />
-        <button onClick={addKid} style={{ marginLeft: 6 }}>
-          Add
-        </button>
+        <h3 style={{ margin: "10px 0 6px", color: COLORS.header }}>Kids</h3>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            placeholder="Add kid"
+            value={newKid}
+            onChange={(e) => setNewKid(e.target.value)}
+            style={{
+              padding: 10,
+              borderRadius: 10,
+              border: `1px solid ${COLORS.border}`,
+              background: "#fff",
+              minWidth: 220,
+            }}
+          />
+          <button style={buttonStyle("primary")} onClick={addKid}>
+            Add
+          </button>
+        </div>
       </div>
 
-      {/* RATES */}
-      <div
-        style={{
-          marginTop: 16,
-          padding: 12,
-          border: "1px solid #eee",
-          borderRadius: 8,
-        }}
-      >
+      {/* RATES UNDER "ADD KID" */}
+      <div style={{ marginTop: 16, ...cardStyle() }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <h3 style={{ margin: 0 }}>Reimbursement Rates</h3>
+          <h3 style={{ margin: 0, color: COLORS.header }}>Reimbursement Rates</h3>
           {ratesStatus ? (
-            <span style={{ fontSize: 12, opacity: 0.8 }}>{ratesStatus}</span>
+            <span
+              style={{
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 8,
+                background: COLORS.infoBg,
+                color: COLORS.infoText,
+                border: `1px solid ${COLORS.border}`,
+              }}
+            >
+              {ratesStatus}
+            </span>
           ) : null}
         </div>
 
-        <div
-          style={{
-            marginTop: 10,
-            display: "flex",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", color: COLORS.header }}>
             Year:
             <input
               type="number"
               value={ratesYear}
               onChange={(e) => setRatesYear(Number(e.target.value))}
-              style={{ padding: 6, width: 110 }}
+              style={{
+                padding: 10,
+                width: 120,
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+                background: "#fff",
+              }}
             />
           </label>
 
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", color: COLORS.header }}>
             Breakfast ($):
             <input
               type="number"
               step="0.01"
               value={rateBreakfast}
               onChange={(e) => setRateBreakfast(e.target.value)}
-              style={{ padding: 6, width: 120 }}
+              style={{
+                padding: 10,
+                width: 140,
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+                background: "#fff",
+              }}
             />
           </label>
 
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", color: COLORS.header }}>
             Snack ($):
             <input
               type="number"
               step="0.01"
               value={rateSnack}
               onChange={(e) => setRateSnack(e.target.value)}
-              style={{ padding: 6, width: 120 }}
+              style={{
+                padding: 10,
+                width: 140,
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+                background: "#fff",
+              }}
             />
           </label>
 
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", color: COLORS.header }}>
             Lunch ($):
             <input
               type="number"
               step="0.01"
               value={rateLunch}
               onChange={(e) => setRateLunch(e.target.value)}
-              style={{ padding: 6, width: 120 }}
+              style={{
+                padding: 10,
+                width: 140,
+                borderRadius: 10,
+                border: `1px solid ${COLORS.border}`,
+                background: "#fff",
+              }}
             />
           </label>
 
-          <button onClick={saveRatesForYear}>Save Rates</button>
+          <button style={buttonStyle("primary")} onClick={saveRatesForYear}>
+            Save Rates
+          </button>
         </div>
 
-        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-          Tip: These rates apply automatically based on each record’s date year.
-          If a year is missing, the app uses the most recent prior year’s rates.
+        <div style={{ marginTop: 8, fontSize: 12, color: COLORS.muted }}>
+          Tip: Rates apply automatically based on each record’s year. Missing years use the most recent prior year’s rates.
         </div>
       </div>
 
       {/* SUMMARY */}
-      <div
-        style={{
-          marginTop: 16,
-          padding: 12,
-          border: "1px solid #eee",
-          borderRadius: 8,
-        }}
-      >
-        <h3 style={{ marginTop: 0 }}>Reimbursement Summary</h3>
+      <div style={{ marginTop: 16, ...cardStyle() }}>
+        <h3 style={{ marginTop: 0, color: COLORS.header }}>Reimbursement Summary</h3>
 
         <div style={{ marginTop: 8 }}>
-          <b>Annual</b>
+          <b style={{ color: COLORS.header }}>Annual</b>
           <div style={{ overflowX: "auto", marginTop: 6 }}>
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
                 <tr>
-                  {["Year", "Breakfasts", "Snacks", "Lunches", "Total ($)"].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        style={{
-                          textAlign: "left",
-                          borderBottom: "1px solid #eee",
-                          padding: "6px 8px",
-                          fontSize: 13,
-                        }}
-                      >
-                        {h}
-                      </th>
-                    )
-                  )}
+                  {["Year", "Breakfasts", "Snacks", "Lunches", "Total ($)"].map((h) => (
+                    <th
+                      key={h}
+                      style={{
+                        textAlign: "left",
+                        borderBottom: `1px solid ${COLORS.border}`,
+                        padding: "8px 10px",
+                        fontSize: 13,
+                        color: COLORS.muted,
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {annualSummary.length === 0 ? (
                   <tr>
-                    <td style={{ padding: "8px" }} colSpan={5}>
+                    <td style={{ padding: "10px", color: COLORS.muted }} colSpan={5}>
                       No data yet.
                     </td>
                   </tr>
                 ) : (
                   annualSummary.map((r) => (
                     <tr key={r.year}>
-                      <td style={{ padding: "6px 8px" }}>{r.year}</td>
-                      <td style={{ padding: "6px 8px" }}>{r.breakfasts}</td>
-                      <td style={{ padding: "6px 8px" }}>{r.snacks}</td>
-                      <td style={{ padding: "6px 8px" }}>{r.lunches}</td>
-                      <td style={{ padding: "6px 8px" }}>
+                      <td style={{ padding: "8px 10px", color: COLORS.header, fontWeight: 700 }}>{r.year}</td>
+                      <td style={{ padding: "8px 10px" }}>{r.breakfasts}</td>
+                      <td style={{ padding: "8px 10px" }}>{r.snacks}</td>
+                      <td style={{ padding: "8px 10px" }}>{r.lunches}</td>
+                      <td style={{ padding: "8px 10px", fontWeight: 800 }}>
                         {r.total.toFixed(2)}
                       </td>
                     </tr>
@@ -900,43 +1002,42 @@ export default function App() {
         </div>
 
         <div style={{ marginTop: 14 }}>
-          <b>Monthly</b>
+          <b style={{ color: COLORS.header }}>Monthly</b>
           <div style={{ overflowX: "auto", marginTop: 6 }}>
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
                 <tr>
-                  {["Month", "Breakfasts", "Snacks", "Lunches", "Total ($)"].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        style={{
-                          textAlign: "left",
-                          borderBottom: "1px solid #eee",
-                          padding: "6px 8px",
-                          fontSize: 13,
-                        }}
-                      >
-                        {h}
-                      </th>
-                    )
-                  )}
+                  {["Month", "Breakfasts", "Snacks", "Lunches", "Total ($)"].map((h) => (
+                    <th
+                      key={h}
+                      style={{
+                        textAlign: "left",
+                        borderBottom: `1px solid ${COLORS.border}`,
+                        padding: "8px 10px",
+                        fontSize: 13,
+                        color: COLORS.muted,
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {monthlySummary.length === 0 ? (
                   <tr>
-                    <td style={{ padding: "8px" }} colSpan={5}>
+                    <td style={{ padding: "10px", color: COLORS.muted }} colSpan={5}>
                       No data yet.
                     </td>
                   </tr>
                 ) : (
                   monthlySummary.map((r) => (
                     <tr key={r.month}>
-                      <td style={{ padding: "6px 8px" }}>{r.month}</td>
-                      <td style={{ padding: "6px 8px" }}>{r.breakfasts}</td>
-                      <td style={{ padding: "6px 8px" }}>{r.snacks}</td>
-                      <td style={{ padding: "6px 8px" }}>{r.lunches}</td>
-                      <td style={{ padding: "6px 8px" }}>
+                      <td style={{ padding: "8px 10px", color: COLORS.header, fontWeight: 700 }}>{r.month}</td>
+                      <td style={{ padding: "8px 10px" }}>{r.breakfasts}</td>
+                      <td style={{ padding: "8px 10px" }}>{r.snacks}</td>
+                      <td style={{ padding: "8px 10px" }}>{r.lunches}</td>
+                      <td style={{ padding: "8px 10px", fontWeight: 800 }}>
                         {r.total.toFixed(2)}
                       </td>
                     </tr>
@@ -948,8 +1049,11 @@ export default function App() {
         </div>
       </div>
 
-      <hr />
-      <button onClick={exportExcel}>Export Excel (Records + Summaries)</button>
+      <div style={{ marginTop: 16 }}>
+        <button style={buttonStyle("primary")} onClick={exportExcel}>
+          Export Excel (Records + Summaries)
+        </button>
+      </div>
     </div>
   );
 }
